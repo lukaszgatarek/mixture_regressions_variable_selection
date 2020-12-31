@@ -1,0 +1,536 @@
+---
+title: "Mixture of regressions with automatic variable selection"
+author:
+- Lukasz T. Gatarek
+bibliography: library.bib
+fontsize: 20pt
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+  html_document: default
+  word_document:
+    toc: yes
+institute: Uni Lodz
+linkcolor: cyan
+header-includes:
+- \usepackage{setspace}
+- \usepackage{makecell}
+- \usepackage{amsmath}
+- \doublespacing
+- \usepackage{floatrow}
+- \floatsetup{capposition=top}
+- \floatplacement{figure}{H}
+- \captionsetup{position=above, aboveskip=0pt, belowskip=0pt}
+
+
+abstract: 
+urlcolor: green
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require('latex2exp')
+```
+
+\setlength{\abovecaptionskip}{-25pt plus 2pt minus 2pt}
+\setlength{\belowcaptionskip}{-25pt plus 2pt minus 2pt}
+
+\newpage
+
+# Mixture of regression 
+
+Any cloud of data can be modeled by finite mixture of regressions. Despite the fact that the regressions are linear, their composition allows for representing any nonlinear behavior, which is linear in selected part of the domain, or for selecteed subsets of observations. 
+
+The model setup follows a mixture of $G$ Normal components
+\begin{equation}
+\label{eq:model}
+y_i|x_i, \{\beta_g, \sigma_g^2, \pi_g\}_{g=1}^G \sim \sum_{g=1}^G \pi_g N(x_i \beta_g, \sigma_g^2), \ \ \ \sum_{g=1}^G \pi_g = 1, \ \ \ \ i=1,\ldots, n,
+\end{equation}
+where $M$ explanatory variables are considered 
+\begin{equation}
+x_i = [x_{i,1}\  x_{i,2}\ \ldots x_{i,M}]
+\end{equation}
+together with the corresponding vector of parameters
+\begin{equation}
+\beta_g = [\beta_{g,1}\  \beta_{g,2}\ \ldots \beta_{g,M}].
+\end{equation}
+Parameters $\beta$ can vary freely across different explanatory variables $j=1, \ldots, M$ and components $g=1, \ldots, G$.
+
+The model allows each Normal component to possess its own variance $\sigma_g$ and mean, controlled by the regression parameters $\beta_g$. 
+
+```{r fig.cap = "Data generated from mixture of regressions with 3 components, \\ each with 1 explanaotry variable \\label{simulated_data_1}", results='asis', echo=FALSE, fig.height=12.8, fig.width=8, tidy = FALSE}
+## generate the observations
+# length of time series
+N <- 200
+
+nSim <- 1000
+
+## generate xs for each of the G components in the mixture of regression models 
+# number of componets in the mixture
+G <- 3
+
+# parameter telling how many explanatory variable there are in each equation 
+# (for the time being we assume it needs to be the same number of explanatory variables in each equation)
+numXs <- 1
+
+dimG <- rep(numXs, G)
+#dimG <- c(1,1,1,1,1,1)
+# this artificial variable is used to know which parameters to choose from the vector
+cumDimG <- cumsum(dimG)
+
+
+# tus we simulate the explanatory data in the way that we simulate N times the number of explanatory variables times the number of groups
+#xSim <- rnorm(N * sum(dimG) * numXs, 0, 0.1)
+# number of explanatory variables in each component
+#dimG <- rep(1, G)
+simData <- list()
+# alternatively we put it in the list 
+for (g in 1:G){
+  simData[[g]] <- matrix(rnorm(N * dimG[g], 0, 1), N, dimG[g])
+}
+
+## define data generating process
+# vector of beta parameters
+betas <- (1:sum(dimG) ) + rnorm(sum(dimG),0,1.5)
+#betas <-   rnorm(sum(dimG),0,3)
+# lets keep them ordered properly
+reorderWay <-  order(betas)
+betas <- betas[reorderWay]
+
+#betas <- abs(rnorm(sum(dimG), 0, 5))
+# vector of sigma parameters, this are sigmas_g in equation 15.40 and they are group specific (and not parameter sepcific)
+sigmas <- rep(1, G) 
+#sigmas <- (1:G) / 6
+
+## simulate from the data generating process
+# for every component of the regression mixture we need to select the variables which enter into it;
+# let us define a list which will keep the indexes of those variables
+
+variable_selector = {}
+# randomly select the variables that would be used for each regression;
+# the necessary indexes are sampled from multinomial distribution with equal probability (for each external variable)
+for (g in 1:G){
+  variable_selector[[g]] <- which(rmultinom(1, numXs, rep(1/numXs, numXs) ) > 0) }
+
+# those indexes are applied in regression to appropriately select the variables
+for (g in 1:G){
+  y <- NULL
+ 
+  #print(betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ])
+  
+  for (i in 1:N){
+    # take appropriate parameters from the beta vector, accordingly to the values in variable selector
+    y[i] <- rnorm(1, simData[[g]][i, variable_selector[[g]]] %*%
+                    betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ][variable_selector[[g]]], sqrt(sigmas[g]) )    
+  }
+  simData[[g]] <- cbind(y, simData[[g]])
+} 
+
+
+data <- NULL
+for (g in 1:G){
+  data <- rbind(data, simData[[g]])
+}
+
+par(mfrow=c(2,1))
+
+# plot  join scatterplot
+for (g in G:1){
+    if (g==G){
+      plot(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Dependence between y and x', xlab = 'x', ylab = 'y') 
+    } else {
+      points(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, xlab = 'x', ylab = 'y')   
+    }
+}
+
+# plot the final dependent variable data only
+for (g in G:1){
+  if (g==G){
+    plot( data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Cloud of generated data: y', xlab = 'index', ylab = 'y') 
+  } else {
+    points( data[(((g-1) * N) + 1) : (g*N), 1], col = g)   
+  }
+}
+
+
+```
+
+```{r fig.cap = "Data generated from mixture of regressions with 3 components, \\ each with 1 explanaotry variable \\label{simulated_data_3}", results='asis', echo=FALSE, fig.height=12.8, fig.width=8, tidy = FALSE}
+## generate the observations
+# length of time series
+N <- 200
+
+nSim <- 1000
+
+## generate xs for each of the G components in the mixture of regression models 
+# number of componets in the mixture
+G <- 3
+
+# parameter telling how many explanatory variable there are in each equation 
+# (for the time being we assume it needs to be the same number of explanatory variables in each equation)
+numXs <- 1
+
+dimG <- rep(numXs, G)
+#dimG <- c(1,1,1,1,1,1)
+# this artificial variable is used to know which parameters to choose from the vector
+cumDimG <- cumsum(dimG)
+
+
+# tus we simulate the explanatory data in the way that we simulate N times the number of explanatory variables times the number of groups
+#xSim <- rnorm(N * sum(dimG) * numXs, 0, 0.1)
+# number of explanatory variables in each component
+#dimG <- rep(1, G)
+simData <- list()
+# alternatively we put it in the list 
+for (g in 1:G){
+  simData[[g]] <- matrix(rnorm(N * dimG[g], 0, 1), N, dimG[g])
+}
+
+## define data generating process
+# vector of beta parameters
+#betas <- (1:sum(dimG) ) + rnorm(sum(dimG),0,1)
+betas <-   rnorm(sum(dimG),0,3)
+# lets keep them ordered properly
+reorderWay <-  order(betas)
+betas <- betas[reorderWay]
+
+#betas <- abs(rnorm(sum(dimG), 0, 5))
+# vector of sigma parameters, this are sigmas_g in equation 15.40 and they are group specific (and not parameter sepcific)
+sigmas <- rep(1, G) 
+#sigmas <- (1:G) / 6
+
+## simulate from the data generating process
+# for every component of the regression mixture we need to select the variables which enter into it;
+# let us define a list which will keep the indexes of those variables
+
+variable_selector = {}
+# randomly select the variables that would be used for each regression;
+# the necessary indexes are sampled from multinomial distribution with equal probability (for each external variable)
+for (g in 1:G){
+  variable_selector[[g]] <- which(rmultinom(1, numXs, rep(1/numXs, numXs) ) > 0) }
+
+# those indexes are applied in regression to appropriately select the variables
+for (g in 1:G){
+  y <- NULL
+ 
+  #print(betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ])
+  
+  for (i in 1:N){
+    # take appropriate parameters from the beta vector, accordingly to the values in variable selector
+    y[i] <- rnorm(1, simData[[g]][i, variable_selector[[g]]] %*%
+                    betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ][variable_selector[[g]]], sqrt(sigmas[g]) )    
+  }
+  simData[[g]] <- cbind(y, simData[[g]])
+} 
+
+
+data <- NULL
+for (g in 1:G){
+  data <- rbind(data, simData[[g]])
+}
+
+par(mfrow=c(2,1))
+
+# plot  join scatterplot
+for (g in G:1){
+    if (g==G){
+      plot(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Dependence between y and x', xlab = 'x', ylab = 'y') 
+    } else {
+      points(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, xlab = 'x', ylab = 'y')   
+    }
+}
+
+# plot the final dependent variable data only
+for (g in G:1){
+  if (g==G){
+    plot( data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Cloud of generated data: y', xlab = 'index', ylab = 'y') 
+  } else {
+    points( data[(((g-1) * N) + 1) : (g*N), 1], col = g)   
+  }
+}
+
+
+```
+
+```{r fig.cap = "Data generated from mixture of regressions with 5 components, \\ each with 1 explanaotry variable \\label{simulated_data_5}", results='asis', echo=FALSE, fig.height=12.8, fig.width=8, tidy = FALSE}
+## generate the observations
+# length of time series
+N <- 200
+
+nSim <- 1000
+
+## generate xs for each of the G components in the mixture of regression models 
+# number of componets in the mixture
+G <- 5
+
+# parameter telling how many explanatory variable there are in each equation 
+# (for the time being we assume it needs to be the same number of explanatory variables in each equation)
+numXs <- 1
+
+dimG <- rep(numXs, G)
+#dimG <- c(1,1,1,1,1,1)
+# this artificial variable is used to know which parameters to choose from the vector
+cumDimG <- cumsum(dimG)
+
+
+# tus we simulate the explanatory data in the way that we simulate N times the number of explanatory variables times the number of groups
+#xSim <- rnorm(N * sum(dimG) * numXs, 0, 0.1)
+# number of explanatory variables in each component
+#dimG <- rep(1, G)
+simData <- list()
+# alternatively we put it in the list 
+for (g in 1:G){
+  simData[[g]] <- matrix(rnorm(N * dimG[g], 0, 1), N, dimG[g])
+}
+
+## define data generating process
+# vector of beta parameters
+#betas <- (1:sum(dimG) ) + rnorm(sum(dimG),0,1)
+betas <-   rnorm(sum(dimG),0,1)
+# lets keep them ordered properly
+reorderWay <-  order(betas)
+betas <- betas[reorderWay]
+
+#betas <- abs(rnorm(sum(dimG), 0, 5))
+# vector of sigma parameters, this are sigmas_g in equation 15.40 and they are group specific (and not parameter sepcific)
+sigmas <- rep(1, G) 
+#sigmas <- (1:G) / 6
+
+## simulate from the data generating process
+# for every component of the regression mixture we need to select the variables which enter into it;
+# let us define a list which will keep the indexes of those variables
+
+variable_selector = {}
+# randomly select the variables that would be used for each regression;
+# the necessary indexes are sampled from multinomial distribution with equal probability (for each external variable)
+for (g in 1:G){
+  variable_selector[[g]] <- which(rmultinom(1, numXs, rep(1/numXs, numXs) ) > 0) }
+
+# those indexes are applied in regression to appropriately select the variables
+for (g in 1:G){
+  y <- NULL
+ 
+  #print(betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ])
+  
+  for (i in 1:N){
+    # take appropriate parameters from the beta vector, accordingly to the values in variable selector
+    y[i] <- rnorm(1, simData[[g]][i, variable_selector[[g]]] %*%
+                    betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ][variable_selector[[g]]], sqrt(sigmas[g]) )    
+  }
+  simData[[g]] <- cbind(y, simData[[g]])
+} 
+
+
+data <- NULL
+for (g in 1:G){
+  data <- rbind(data, simData[[g]])
+}
+
+par(mfrow=c(2,1))
+
+# plot  join scatterplot
+for (g in G:1){
+    if (g==G){
+      plot(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Dependence between y and x', xlab = 'x', ylab = 'y') 
+    } else {
+      points(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, xlab = 'x', ylab = 'y')   
+    }
+}
+
+# plot the final dependent variable data only
+for (g in G:1){
+  if (g==G){
+    plot( data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Cloud of generated data: y', xlab = 'index', ylab = 'y') 
+  } else {
+    points( data[(((g-1) * N) + 1) : (g*N), 1], col = g)   
+  }
+}
+
+
+```
+
+```{r fig.cap = "Data generated from mixture of regressions with 5 components, \\ each with 1 explanaotry variable \\label{simulated_data_7}", results='asis', echo=FALSE, fig.height=12.8, fig.width=8, tidy = FALSE}
+## generate the observations
+# length of time series
+N <- 200
+
+nSim <- 1000
+
+## generate xs for each of the G components in the mixture of regression models 
+# number of componets in the mixture
+G <- 7
+
+# parameter telling how many explanatory variable there are in each equation 
+# (for the time being we assume it needs to be the same number of explanatory variables in each equation)
+numXs <- 1
+
+dimG <- rep(numXs, G)
+#dimG <- c(1,1,1,1,1,1)
+# this artificial variable is used to know which parameters to choose from the vector
+cumDimG <- cumsum(dimG)
+
+
+# tus we simulate the explanatory data in the way that we simulate N times the number of explanatory variables times the number of groups
+#xSim <- rnorm(N * sum(dimG) * numXs, 0, 0.1)
+# number of explanatory variables in each component
+#dimG <- rep(1, G)
+simData <- list()
+# alternatively we put it in the list 
+for (g in 1:G){
+  simData[[g]] <- matrix(rnorm(N * dimG[g], 0, 1), N, dimG[g])
+}
+
+## define data generating process
+# vector of beta parameters
+#betas <- (1:sum(dimG) ) + rnorm(sum(dimG),0,1)
+betas <-   rnorm(sum(dimG),0,1)
+# lets keep them ordered properly
+reorderWay <-  order(betas)
+betas <- betas[reorderWay]
+
+#betas <- abs(rnorm(sum(dimG), 0, 5))
+# vector of sigma parameters, this are sigmas_g in equation 15.40 and they are group specific (and not parameter sepcific)
+sigmas <- rep(1, G) 
+#sigmas <- (1:G) / 6
+
+## simulate from the data generating process
+# for every component of the regression mixture we need to select the variables which enter into it;
+# let us define a list which will keep the indexes of those variables
+
+variable_selector = {}
+# randomly select the variables that would be used for each regression;
+# the necessary indexes are sampled from multinomial distribution with equal probability (for each external variable)
+for (g in 1:G){
+  variable_selector[[g]] <- which(rmultinom(1, numXs, rep(1/numXs, numXs) ) > 0) }
+
+# those indexes are applied in regression to appropriately select the variables
+for (g in 1:G){
+  y <- NULL
+ 
+  #print(betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ])
+  
+  for (i in 1:N){
+    # take appropriate parameters from the beta vector, accordingly to the values in variable selector
+    y[i] <- rnorm(1, simData[[g]][i, variable_selector[[g]]] %*%
+                    betas[ (max(cumDimG[g-1],0) + 1) : cumDimG[g] ][variable_selector[[g]]], sqrt(sigmas[g]) )    
+  }
+  simData[[g]] <- cbind(y, simData[[g]])
+} 
+
+
+data <- NULL
+for (g in 1:G){
+  data <- rbind(data, simData[[g]])
+}
+
+par(mfrow=c(2,1))
+
+# plot  join scatterplot
+for (g in G:1){
+    if (g==G){
+      plot(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Dependence between y and x', xlab = 'x', ylab = 'y') 
+    } else {
+      points(data[ (((g-1) * N) + 1) : (g*N), 2], data[(((g-1) * N) + 1) : (g*N), 1], col = g, xlab = 'x', ylab = 'y')   
+    }
+}
+
+# plot the final dependent variable data only
+for (g in G:1){
+  if (g==G){
+    plot( data[(((g-1) * N) + 1) : (g*N), 1], col = g, main = 'Cloud of generated data: y', xlab = 'index', ylab = 'y') 
+  } else {
+    points( data[(((g-1) * N) + 1) : (g*N), 1], col = g)   
+  }
+}
+
+
+```
+
+
+
+Such models are estimated by augmenting the model with a set of components label vectors $\{ z_i\}_{i=1}^n$, where
+\begin{equation}
+z_i = [z_{1i}\  z_{2i}\ \ldots z_{Gi}],
+\end{equation}
+and $z_{gi} = 1$ implies that the $i$-th individual is drawn from the $g$-th component of the mixture, and $\sum_{g=1}^G z_{gi} = 1$, for a given $i$, so that an individual can not belong to two mixtures at the same time.
+
+The component label vector $z_i$ depends on a vector of component probabilities $\pi$. The likelihood function for this model is based on the Normal probability and the augmented label vector (let $\theta$ denote all the parameters and component indicator variables in the model)
+\begin{equation}
+L(\theta) = \Pi_{i=1}^n [\phi(y_i;x_i\beta_1, \sigma_1^2)]^{z_1i} [\phi(y_i;x_i\beta_2, \sigma_2^2)]^{z_2i}\ldots  [\phi(y_i;x_i\beta_G, \sigma_G^2)]^{z_Gi}.
+\end{equation}
+Thus, depending on which $z$ is equal to $1$, the respective component of the likelihood is active.
+
+Apart from likelihood, the priors need to be stated for component indicators $z$ and component probabilities $\pi = [\pi_1, \pi_2, \ldots, \pi_G ]$.
+\begin{equation}
+z_i|\pi \sim M(1,\pi), \ \ \ p(z_i|\pi) = \Pi_{g=1}^G \pi_g ^{z_{g_i}}, 
+\end{equation}
+\begin{equation}
+\pi\sim D(\alpha_1, \alpha_2, \ldots, \alpha_G), \ \ \ p(\pi) \propto \pi_1^{\alpha_1-1}\pi_2^{\alpha_2-1}\ldots \pi_G^{\alpha_G-1},
+\end{equation}
+where $M$ and $D$ denote the multinomial and Dirichlet distributions, respectively. 
+
+Furthermore the priors for the parameters governing the Normal components are necessary. Traditionally for the mean and variance, the normal and the inverted gamma priors are imposed, respectively
+\begin{align}
+\beta_g \sim N(\mu_{\beta_g}, V_{\beta_g})\\
+\sigma_g^2 \sim IG(a_g, b_g),
+\end{align}
+where $\mu_{\beta_g}, V_{\beta_g}, a_g, b_g$ denote the hyperparameters.
+
+Given this setup a complete set of conditional distributions can be obtained. For clarity of notation let us denote by $\theta_{-x}$ a set of all parameters apart from $x$.
+\begin{equation}
+\label{eq:beta_posterior}
+\beta_g| \theta_{-\beta_g}, y \sim N(D_{\beta_g}d_{\beta_g}, D_{\beta_g}), \ \ g=1,2,\ldots, G,
+\end{equation}
+where 
+\begin{equation}
+\label{eq:beta_posterior_D}
+D_{\beta_g}=\left[ \left( \sum_{i} z_{gi} x_i x_i '\right)/ \sigma^2_g + V_{\beta_g} ^{-1}\right]^{-1}
+\end{equation}
+and 
+\begin{equation}
+d_{\beta_g}= \left( \sum_{i} z_{gi} x_i'  y_i \right)/ \sigma^2_g + V_{\beta_g} ^{-1} \mu_{\beta_g}. 
+\end{equation}
+Then for the variance of the regression error term the conditional distribution is given in inverted gamma form
+\begin{equation}
+\label{eq:sigma_posterior}
+\sigma_g^2|\theta_{-\sigma_g^2}, y \sim IG\left(  \frac{n_g}{2} + a_g, \left[ b_g^{-1} + \frac{1}{2}  \sum_{i} z_{gi}(y_i - x_i \beta_g)^2 \right]^{-1}\right),
+\end{equation}
+where $n_g = \sum_{i} z_{gi}$ denotes the number of observations in the $g$-th component of the mixture.
+
+For the indicators the conditional distribution is given
+\begin{equation}
+\label{eq:z_posterior}
+z_i|\theta_{-z_i}, y \sim M\left(1, \left[ \frac{\pi_1 \phi(y_i; x_i \beta_1, \sigma_1^2 )}{\sum_{g=1}^G \pi_g \phi(y_i; x_i \beta_g, \sigma_g^2 )}, 
+\frac{\pi_2 \phi(y_i; x_i \beta_2, \sigma_2^2 )}{\sum_{g=1}^G \pi_g \phi(y_i; x_i \beta_g, \sigma_g^2 )}, \ldots, 
+\frac{\pi_G \phi(y_i; x_i \beta_G, \sigma_G^2 )}{\sum_{g=1}^G \pi_g \phi(y_i; x_i \beta_g, \sigma_g^2 )}
+\right]  \right).
+\end{equation}
+
+Finally, for the component probability vector $\pi$, the posterior distribution is in Dirichlet form similarly to the prior
+\begin{equation}
+\label{eq:pi_posterior}
+\pi|\theta_{-\pi} \sim D(n_1+\alpha_1, n_2 + \alpha_2, \ldots, n_G + \alpha_G)
+\end{equation}
+
+To sample the joint posterior distribution, the Gibbs sampler can be implemented to sample the individual condititonal distributions in the following order (\ref{eq:beta_posterior}, \ref{eq:sigma_posterior}, \ref{eq:z_posterior}, \ref{eq:pi_posterior}). The initial values can be drawn from the respective priors accordingly.
+
+Now let us assume that the model in (\ref{eq:model}) is a general form with fixed number of variables in $x_i$, but our objective is to select a functional form which is optimal in terms of fit. To that end we need a variable selection algorithm. One of the method to introduce it comes with stochastic search variable selection ideas. The model specification above would require minor alteration, which can have deep consequences for the model flexibility. 
+
+This alteration comes for the prior for the regression coefficients and is useful for the case where a larage number of explanatory variables exist, but the researcher does not know which are likely to be important in the model. To capture that the prior for each regression coefficient is specified as a mixture of two normals, both with mean zero, but with completely different variance. One of the term in the mixture has very small variance, what implies that the coefficient is virtually zero and thus the variable can be effectively excluded from the model. The other coefficient has a large variance, what means that it is most likely different from $0$ and thus the variable should be retained in the model. Formally, for each coefficient $\beta_{g,j}$ the prior is given by
+\begin{equation}
+\label{eq:beta_prior}
+\beta_{g,j}|\gamma_{g,j} \sim (1-\gamma_{g,j}) N(0, \tau^2) + \gamma_{g,j} N(0, c^2 \tau^2)
+\end{equation}
+
+Then $V_{\beta_g}(\gamma_g)$ is the diagonal matrix with the $(j,j)$-th element given by $(1-\gamma_{g,j}) \tau^2 + \gamma_{g,j} c^2 \tau^2$.
+It enters in the sampling algorithm via (\ref{eq:beta_posterior_D}). 
+At the same time elements $\gamma_{g,j}$ need to be sampled appropriately. They are driven by the binomial distribution controlled by the probability derived from (\ref{eq:beta_prior})
+\begin{equation}
+\gamma_{g,j}|\theta_{-\gamma_{g,j}}, \beta_{g_j} \ \sim B(1, \frac{   p\phi(\beta_{g,j};0,c^2 \tau^2)  }{p\phi(\beta_{g,j};0,c^2 \tau^2)  +   (1-p)\phi(\beta_{g,j};0,\tau^2)}), \ \ \ g=1, \ldots, G, \ \ \ j=1, \ldots, M.
+\end{equation}
+where parameter $p$ denotes the prior probability for the variable to be included in the model. 
+
+
+
+
