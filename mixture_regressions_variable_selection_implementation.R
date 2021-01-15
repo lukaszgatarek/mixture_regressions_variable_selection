@@ -22,7 +22,7 @@ G <- 5
 # length of time series is dependent on the lengths of individual components
 # vector n records the lengths of the individual series; we draw them randomly
 n <- round(runif(G) * 1000, 0)
-n <- rep(300, G)
+#n <- rep(300, G)
 # the total number of observations is implied by the length of the individual components
 N <- sum(n)
 
@@ -93,23 +93,28 @@ for (g in 1:G){
 }
 
 # plot join scatterplot
-for (g in G:1){
-    if (g==G){
-      plot(data[ (((g-1) * n[g]) + 1) : (g*n[g]), 2], data[(((g-1) * n[g]) + 1) : (g*n[g]), 1], col = g) 
+cum_sum_n <- cumsum(n)
+cum_sum_n <- c(0, cum_sum_n)
+for (g in (G+1):1){
+    if (g==(G+1)){
+      plot(data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g], 2], data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g], 1 ], col = g) 
     } else {
-      points(data[ (((g-1) * n[g]) + 1) : (g*n[g]), 2], data[(((g-1) * n[g]) + 1) : (g*n[g]), 1], col = g)   
+      if (g>1){
+      points(data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g] , 2], data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g] , 1], col = g) }
+      
     }
 }
 
 # plot the final dependent variable data only
-for (g in G:1){
-  if (g==G){
-    plot( data[(((g-1) * n[g]) + 1) : (g*n[g]), 1], col = g) 
+for (g in (G+1):1){
+  if (g==(G+1)){
+    plot(data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g], 1 ], col = g) 
   } else {
-    points( data[(((g-1) * n[g]) + 1) : (g*n[g]), 1], col = g)   
+    if (g>1){
+      points(data[ (cum_sum_n[g-1] + 1) : cum_sum_n[g] , 1], col = g) }
+    
   }
 }
-
 
 ## Priors
 # priors for beta: we assume G components, and number of coefficinets accordingly to the number of parameters in the regression
@@ -129,8 +134,11 @@ nSim <- 3000
 mBeta <- array(NA, dim = c(nSim, numXs, G))
 
 # draw the first beta for every group
+
+# varaince of beta parameters is necessary to start sampling
+VBeta <- diag(numXs) * 100
 for (g in 1:G){
-  #mBeta[1,g] <-  rnorm(1, muBeta[g, 1], VBeta[g,g])
+  # sample initial draw of beta from the prior 
   mBeta[1, ,g] <-  rmvnorm(1, (muBeta[g, ]), VBeta)
 }
 
@@ -139,18 +147,24 @@ probs <- array(NA, dim = c(nSim, numXs, G))
 # at the beginning let us assume that all the variables are necessary as regressors
 probs[1, , ] <- 1
 
+# container for probability of inclusion for variables in the regression (this container is used to keep the probabilities in a temporary way)
 probPro <- matrix(NA, numXs, 1)
 
-# for sigma
+# container for sigma2
 mSigma2 <- matrix(NA, nSim, G)
 # draw sigma, it is group specific
 mSigma2[1,] <- rigamma(1, shSigma, raSigma)
 
-# for pi
+# for pi, component probability (pi_g's) 
 mPi <- matrix(NA, nSim, G)
-alphaPrior <- rep(N/G, G)
+# to draw fom the prior of pi we need to bring in the prior hyperparameters alpha's
+alphaPrior <- n
 # draw first value of p for every observation in the sample
 mPi[1,] <- rdirichlet(1, alphaPrior)
+
+
+
+
 
 # for zi
 z <- matrix(NA, nSim, N*G)
